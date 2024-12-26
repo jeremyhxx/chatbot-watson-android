@@ -1,62 +1,114 @@
 apply plugin: 'com.android.application'
 
-repositories {
-    maven {
-        url  "https://dl.bintray.com/ibm-cloud-sdks/ibm-cloud-sdk-repo"
-    }
-}
-
 android {
-    compileSdkVersion 29
-    buildToolsVersion '28.0.3'
+    namespace 'com.example.vmac.WatBot'
+    compileSdkVersion 34
+    
     defaultConfig {
         applicationId "com.example.vmac.chatbot"
         minSdkVersion 21
-        targetSdkVersion 29
+        targetSdkVersion 34
         versionCode 1
         versionName "1.0"
+        
+        // Enable multidex
         multiDexEnabled true
-        testInstrumentationRunner "android.support.test.runner.AndroidJUnitRunner"
-
+        
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
-    lintOptions {
-        abortOnError false
+    
+    packagingOptions {
+        resources {
+            excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE', 'META-INF/LICENSE.txt', 'META-INF/license.txt',
+                        'META-INF/NOTICE', 'META-INF/NOTICE.txt', 'META-INF/notice.txt', 'META-INF/ASL2.0',
+                        'META-INF/*.kotlin_module']
+        }
     }
 
-    // solve duplicate classes
-    applicationVariants.all { variant ->
-        variant.getRuntimeConfiguration().exclude group: 'com.google.code.findbugs', module: 'jsr305'
-        variant.getRuntimeConfiguration().exclude group: 'com.google.code.findbugs', module: 'annotations'
+    configurations.all {
+        resolutionStrategy {
+            force 'org.json:json:20230227'
+            force 'com.squareup.okhttp3:okhttp:4.9.1'
+            force 'com.squareup.okio:okio:2.10.0'
+            force 'com.google.code.gson:gson:2.8.9'
+            force 'com.google.guava:guava:30.1-android'
+        }
     }
 }
 
 dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
-    //noinspection GradleCompatible
-    implementation 'com.android.support:appcompat-v7:28.0.0'
-    //noinspection GradleCompatible
-    implementation 'com.android.support:recyclerview-v7:28.0.0'
-    //noinspection GradleCompatible
-    implementation 'com.android.support:design:28.0.0'
-    //noinspection GradleCompatible
-    implementation 'com.android.support:support-v4:28.0.0'
-    implementation 'com.ibm.watson:assistant:8.5.0'
-    implementation 'com.ibm.watson:text-to-speech:8.5.0'
-    implementation 'com.ibm.watson:speech-to-text:8.5.0'
-    implementation 'com.ibm.watson.developer_cloud:android-sdk:0.5.0'
-    testImplementation 'junit:junit:4.12'
-    implementation 'com.google.android.gms:play-services:10.0.1'
-    implementation 'com.android.support:multidex:1.0.1'
-
-    implementation ('com.github.bumptech.glide:glide:4.9.0') {
+    
+    // AndroidX dependencies
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.legacy:legacy-support-v4:1.0.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    
+    // Multidex support
+    implementation 'androidx.multidex:multidex:2.0.1'
+    
+    // IBM Watson dependencies
+    implementation ('com.ibm.watson:assistant:8.5.0') {
+        exclude module: 'okio'
+        exclude module: 'okhttp'
+        exclude group: 'com.google.code.findbugs'
+        exclude group: 'org.json'
+        exclude group: 'com.android.support'
+        exclude group: 'com.google.guava'
+    }
+    implementation ('com.ibm.watson:text-to-speech:8.5.0') {
+        exclude module: 'okio'
+        exclude module: 'okhttp'
+        exclude group: 'com.google.code.findbugs'
+        exclude group: 'org.json'
+        exclude group: 'com.android.support'
+        exclude group: 'com.google.guava'
+    }
+    implementation ('com.ibm.watson:speech-to-text:8.5.0') {
+        exclude module: 'okio'
+        exclude module: 'okhttp'
+        exclude group: 'com.google.code.findbugs'
+        exclude group: 'org.json'
+        exclude group: 'com.android.support'
+        exclude group: 'com.google.guava'
+    }
+    implementation ('com.ibm.watson:common:8.5.0') {
+        exclude module: 'okio'
+        exclude module: 'okhttp'
+        exclude group: 'com.google.code.findbugs'
+        exclude group: 'org.json'
+        exclude group: 'com.android.support'
+        exclude group: 'com.google.guava'
+    }
+    
+    // OkHttp dependencies
+    implementation 'com.squareup.okhttp3:okhttp:4.9.1'
+    implementation 'com.squareup.okio:okio:2.10.0'
+    
+    // Google Play Services
+    implementation 'com.google.android.gms:play-services-base:18.2.0'
+    implementation 'com.google.android.gms:play-services-auth:20.7.0'
+    
+    // Glide
+    implementation ('com.github.bumptech.glide:glide:4.15.1') {
         exclude group: "com.android.support"
     }
-    annotationProcessor 'com.github.bumptech.glide:compiler:4.9.0'
-
+    annotationProcessor 'com.github.bumptech.glide:compiler:4.15.1'
+    
+    // Testing
+    testImplementation 'junit:junit:4.13.2'
 }

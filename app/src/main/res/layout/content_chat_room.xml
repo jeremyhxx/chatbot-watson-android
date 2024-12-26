@@ -8,7 +8,7 @@
     tools:context="com.example.vmac.WatBot.MainActivity"
     tools:showIn="@layout/activity_main">
 
-    <android.support.v7.widget.RecyclerView
+    <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recycler_view"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -25,7 +25,7 @@
         android:orientation="horizontal"
         android:weightSum="4">
 
-        <android.support.v7.widget.AppCompatImageButton
+        <androidx.appcompat.widget.AppCompatImageButton
             android:id="@+id/btn_record"
             android:layout_width="wrap_content"
             android:layout_height="match_parent"
@@ -34,7 +34,7 @@
             android:elevation="0dp"
             android:paddingLeft="10dp"
             android:scaleType="fitCenter"
-            android:src="@mipmap/ic_mic" />
+            android:src="@drawable/ic_mic" />
 
         <EditText
             android:id="@+id/message"
@@ -48,15 +48,7 @@
             android:lines="1"
             android:paddingLeft="10dp" />
 
-        <!--<Button android:id="@+id/btn_send"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:background="@null"
-            android:text="ASK"
-            android:textSize="16dp"
-            android:textColor="@color/colorPrimary" />-->
-        <android.support.v7.widget.AppCompatImageButton
+        <androidx.appcompat.widget.AppCompatImageButton
             android:id="@+id/btn_send"
             android:layout_width="0dp"
             android:layout_height="match_parent"
@@ -66,8 +58,7 @@
             android:elevation="0dp"
             android:paddingLeft="10dp"
             android:scaleType="fitCenter"
-            android:src="@mipmap/ic_send" />
-
+            android:src="@drawable/ic_send" />
 
     </LinearLayout>
 
