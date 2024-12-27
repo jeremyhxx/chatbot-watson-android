@@ -454,44 +454,115 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private class SayTask extends AsyncTask<String, Void, String> {
+        private File tempFile = null;
+
         @Override
         protected String doInBackground(String... params) {
             String text = params[0];
             SynthesizeOptions synthesizeOptions = new SynthesizeOptions.Builder()
                     .text(text)
-                    .accept(HttpMediaType.AUDIO_WAV)
+                    .accept("audio/mp3")
                     .voice(SynthesizeOptions.Voice.EN_US_LISAVOICE)
                     .build();
 
             try {
+                // Clean up any existing MediaPlayer first
                 if (mediaPlayer != null) {
-                    mediaPlayer.release();
+                    runOnUiThread(() -> {
+                        try {
+                            mediaPlayer.stop();
+                        } catch (IllegalStateException e) {
+                            // Ignore state errors
+                        }
+                        mediaPlayer.release();
+                        mediaPlayer = null;
+                    });
                 }
-                mediaPlayer = new MediaPlayer();
+
+                // Get the audio stream from Watson
                 InputStream audioStream = textToSpeech.synthesize(synthesizeOptions).execute().getResult();
                 
                 // Write the audio stream to a temporary file
-                File tempFile = File.createTempFile("tts_", ".wav", getCacheDir());
-                java.io.FileOutputStream fos = new java.io.FileOutputStream(tempFile);
-                byte[] buffer = new byte[1024];
-                int length;
-                while ((length = audioStream.read(buffer)) > 0) {
-                    fos.write(buffer, 0, length);
+                tempFile = File.createTempFile("tts_", ".mp3", getCacheDir());
+                try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tempFile)) {
+                    byte[] buffer = new byte[8192];
+                    int length;
+                    while ((length = audioStream.read(buffer)) > 0) {
+                        fos.write(buffer, 0, length);
+                    }
+                    fos.flush();
                 }
-                fos.close();
                 audioStream.close();
-                
-                mediaPlayer.setDataSource(tempFile.getPath());
-                mediaPlayer.prepare();
-                mediaPlayer.setOnCompletionListener(mp -> {
-                    mp.reset();
-                    tempFile.delete();
+
+                // Ensure the file exists and has content
+                if (!tempFile.exists() || tempFile.length() == 0) {
+                    throw new IOException("Failed to write audio file");
+                }
+
+                // Create and set up new MediaPlayer on UI thread
+                runOnUiThread(() -> {
+                    try {
+                        mediaPlayer = new MediaPlayer();
+                        mediaPlayer.setOnErrorListener((mp, what, extra) -> {
+                            Log.e(TAG, "MediaPlayer error: " + what + ", " + extra);
+                            cleanupMediaPlayer();
+                            return true;
+                        });
+
+                        // Set up completion listener before preparing
+                        mediaPlayer.setOnCompletionListener(mp -> {
+                            cleanupMediaPlayer();
+                        });
+
+                        mediaPlayer.setDataSource(tempFile.getAbsolutePath());
+                        mediaPlayer.setOnPreparedListener(mp -> {
+                            try {
+                                mp.start();
+                            } catch (IllegalStateException e) {
+                                Log.e(TAG, "Failed to start MediaPlayer", e);
+                                cleanupMediaPlayer();
+                            }
+                        });
+                        
+                        // Prepare asynchronously
+                        mediaPlayer.prepareAsync();
+                    } catch (IOException e) {
+                        Log.e(TAG, "Failed to set up MediaPlayer", e);
+                        cleanupMediaPlayer();
+                    }
                 });
-                mediaPlayer.start();
+                
+                return "Did synthesize";
             } catch (IOException e) {
-                Log.e(TAG, "Failed to play audio", e);
+                Log.e(TAG, "Failed to synthesize audio", e);
+                cleanupMediaPlayer();
+                return "Failed to synthesize";
             }
-            return "Did synthesize";
+        }
+
+        private void cleanupMediaPlayer() {
+            runOnUiThread(() -> {
+                if (mediaPlayer != null) {
+                    try {
+                        mediaPlayer.stop();
+                    } catch (IllegalStateException e) {
+                        // Ignore state errors
+                    }
+                    mediaPlayer.release();
+                    mediaPlayer = null;
+                }
+                if (tempFile != null) {
+                    tempFile.delete();
+                    tempFile = null;
+                }
+            });
+        }
+
+        @Override
+        protected void onPostExecute(String result) {
+            if (result.equals("Failed to synthesize")) {
+                Toast.makeText(MainActivity.this, "Failed to play audio", Toast.LENGTH_SHORT).show();
+            }
         }
     }
 
