@@ -79,6 +79,12 @@ public class MainActivity extends AppCompatActivity {
 
     private Context mContext;
 
+    private static final int SAMPLE_RATE = 8000;
+    private static final int CHANNEL_CONFIG = android.media.AudioFormat.CHANNEL_IN_MONO;
+    private static final int AUDIO_FORMAT = android.media.AudioFormat.ENCODING_PCM_16BIT;
+    private android.media.AudioRecord audioRecord;
+    private Thread recordingThread = null;
+
     private void createServices() {
         watsonAssistant = new Assistant("2019-02-28", new IamAuthenticator(getString(R.string.assistant_apikey)));
         watsonAssistant.setServiceUrl(getString(R.string.assistant_url));
@@ -321,45 +327,55 @@ public class MainActivity extends AppCompatActivity {
 
     private void startRecording() {
         try {
-            if (mediaRecorder != null) {
-                mediaRecorder.release();
-            }
-            File audioFile = new File(getCacheDir(), "recording.wav");
+            int minBufferSize = android.media.AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT);
+            audioRecord = new android.media.AudioRecord(
+                    android.media.MediaRecorder.AudioSource.MIC,
+                    SAMPLE_RATE,
+                    CHANNEL_CONFIG,
+                    AUDIO_FORMAT,
+                    minBufferSize
+            );
+
+            File audioFile = new File(getCacheDir(), "recording.pcm");
             audioFilePath = audioFile.getAbsolutePath();
-            
-            mediaRecorder = new MediaRecorder();
-            mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
-            mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
-            mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
-            mediaRecorder.setOutputFile(audioFilePath);
-            
-            // Prepare under try-catch to handle prepare failures gracefully
-            try {
-                mediaRecorder.prepare();
-            } catch (IOException e) {
-                Log.e(TAG, "Failed to prepare MediaRecorder", e);
-                releaseMediaRecorder();
-                Toast.makeText(this, "Failed to prepare recording", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            
-            mediaRecorder.start();
+
+            audioRecord.startRecording();
             isRecording = true;
-            btnRecord.setImageResource(R.drawable.ic_stop); // Assuming you have stop icon
+            btnRecord.setImageResource(R.drawable.ic_stop);
             Toast.makeText(this, "Recording started", Toast.LENGTH_SHORT).show();
+
+            recordingThread = new Thread(() -> {
+                byte[] buffer = new byte[minBufferSize];
+                try (java.io.FileOutputStream fos = new java.io.FileOutputStream(audioFile)) {
+                    while (isRecording) {
+                        int read = audioRecord.read(buffer, 0, minBufferSize);
+                        if (read > 0) {
+                            fos.write(buffer, 0, read);
+                        }
+                    }
+                } catch (IOException e) {
+                    Log.e(TAG, "Error writing audio data", e);
+                }
+            });
+            recordingThread.start();
+
         } catch (Exception e) {
             Log.e(TAG, "Failed to start recording", e);
-            releaseMediaRecorder();
+            releaseAudioRecord();
             Toast.makeText(this, "Failed to start recording", Toast.LENGTH_SHORT).show();
         }
     }
 
     private void stopRecording() {
-        if (mediaRecorder != null && isRecording) {
+        if (audioRecord != null && isRecording) {
             try {
-                mediaRecorder.stop();
                 isRecording = false;
-                btnRecord.setImageResource(R.drawable.ic_mic); // Assuming you have mic icon
+                if (recordingThread != null) {
+                    recordingThread.join();
+                    recordingThread = null;
+                }
+                audioRecord.stop();
+                btnRecord.setImageResource(R.drawable.ic_mic);
                 Toast.makeText(this, "Recording stopped", Toast.LENGTH_SHORT).show();
                 
                 // Convert audio to text
@@ -368,19 +384,19 @@ public class MainActivity extends AppCompatActivity {
                 Log.e(TAG, "Failed to stop recording", e);
                 Toast.makeText(this, "Failed to stop recording", Toast.LENGTH_SHORT).show();
             } finally {
-                releaseMediaRecorder();
+                releaseAudioRecord();
             }
         }
     }
 
-    private void releaseMediaRecorder() {
-        if (mediaRecorder != null) {
+    private void releaseAudioRecord() {
+        if (audioRecord != null) {
             try {
-                mediaRecorder.release();
+                audioRecord.release();
             } catch (Exception e) {
-                Log.e(TAG, "Error releasing MediaRecorder", e);
+                Log.e(TAG, "Error releasing AudioRecord", e);
             }
-            mediaRecorder = null;
+            audioRecord = null;
         }
     }
 
@@ -395,7 +411,10 @@ public class MainActivity extends AppCompatActivity {
             FileInputStream fis = new FileInputStream(audioFile);
             RecognizeOptions recognizeOptions = new RecognizeOptions.Builder()
                     .audio(fis)
-                    .contentType("audio/mp4")
+                    .contentType("audio/l16;rate=8000;channels=1;endianness=little-endian")
+                    .model("en-US_NarrowbandModel")
+                    .inactivityTimeout(60)
+                    .interimResults(true)
                     .build();
 
             BaseRecognizeCallback callback = new BaseRecognizeCallback() {
@@ -413,6 +432,7 @@ public class MainActivity extends AppCompatActivity {
                 @Override
                 public void onError(Exception e) {
                     runOnUiThread(() -> {
+                        Log.e(TAG, "Error during speech recognition", e);
                         Toast.makeText(MainActivity.this, "Failed to convert speech to text: " + e.getMessage(), Toast.LENGTH_SHORT).show();
                     });
                 }
@@ -420,7 +440,7 @@ public class MainActivity extends AppCompatActivity {
                 @Override
                 public void onDisconnected() {
                     runOnUiThread(() -> {
-                        audioFile.delete(); // Clean up the audio file
+                        audioFile.delete();
                     });
                 }
             };
@@ -482,10 +502,7 @@ public class MainActivity extends AppCompatActivity {
             mediaPlayer.release();
             mediaPlayer = null;
         }
-        if (mediaRecorder != null) {
-            mediaRecorder.release();
-            mediaRecorder = null;
-        }
+        releaseAudioRecord();
         // Clean up Watson services
         if (watsonAssistantSession != null) {
             try {
