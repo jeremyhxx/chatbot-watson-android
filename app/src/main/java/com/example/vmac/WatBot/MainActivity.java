@@ -48,6 +48,8 @@ import java.util.List;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.util.Map;
+
 import android.media.MediaPlayer;
 import android.media.MediaRecorder;
 import okhttp3.MediaType;
@@ -206,24 +208,31 @@ public class MainActivity extends AppCompatActivity {
 
     private void sendMessage() {
         final String inputmessage = this.inputMessage.getText().toString().trim();
-        if (!this.initialRequest) {
+        
+        // Clear the input field first
+        this.inputMessage.setText("");
+
+        // Only add non-empty messages to UI
+        if (!inputmessage.isEmpty()) {
             Message inputMessage = new Message();
             inputMessage.setMessage(inputmessage);
             inputMessage.setId("1");
             inputMessage.setType(Message.Type.TEXT);
             messageArrayList.add(inputMessage);
-        } else {
-            Message inputMessage = new Message();
-            inputMessage.setMessage(inputmessage);
-            inputMessage.setId("100");
-            inputMessage.setType(Message.Type.TEXT);
+            mAdapter.notifyDataSetChanged();
+            
+            // Scroll to bottom only if we have items
+            if (mAdapter.getItemCount() > 0) {
+                recyclerView.smoothScrollToPosition(mAdapter.getItemCount() - 1);
+            }
+        }
+
+        if (this.initialRequest) {
             this.initialRequest = false;
             Toast.makeText(getApplicationContext(), "Tap on the message for Voice", Toast.LENGTH_LONG).show();
         }
 
-        this.inputMessage.setText("");
-        mAdapter.notifyDataSetChanged();
-
+        // Send to Watson Assistant
         Thread thread = new Thread(() -> {
             try {
                 if (watsonAssistantSession == null) {
@@ -243,58 +252,67 @@ public class MainActivity extends AppCompatActivity {
                         .build();
                 Response<MessageResponse> response = watsonAssistant.message(options).execute();
                 Log.i(TAG, "run: " + response.getResult());
-                if (response != null &&
-                        response.getResult().getOutput() != null &&
-                        !response.getResult().getOutput().getGeneric().isEmpty()) {
 
-                    List<RuntimeResponseGeneric> responses = response.getResult().getOutput().getGeneric();
-                    for (RuntimeResponseGeneric r : responses) {
-                        Message outMessage;
-                        switch (r.responseType()) {
-                            case "text":
-                                outMessage = new Message();
-                                outMessage.setMessage(r.text());
-                                outMessage.setId("2");
-                                outMessage.setType(Message.Type.TEXT);
-                                messageArrayList.add(outMessage);
-                                // speak the message
-                                new SayTask().execute(outMessage.getMessage());
-                                break;
+                if (response != null && response.getResult().getOutput() != null) {
+                    // Process response messages
+                    if (!response.getResult().getOutput().getGeneric().isEmpty()) {
+                        List<RuntimeResponseGeneric> responses = response.getResult().getOutput().getGeneric();
+                        for (RuntimeResponseGeneric r : responses) {
+                            Message outMessage;
+                            switch (r.responseType()) {
+                                case "text":
+                                    outMessage = new Message();
+                                    outMessage.setMessage(r.text());
+                                    outMessage.setId("2");
+                                    outMessage.setType(Message.Type.TEXT);
+                                    messageArrayList.add(outMessage);
+                                    // speak the message
+                                    new SayTask().execute(outMessage.getMessage());
+                                    break;
 
-                            case "option":
-                                outMessage = new Message();
-                                String title = r.title();
-                                StringBuilder optionsOutput = new StringBuilder();
-                                for (DialogNodeOutputOptionsElement option : r.options()) {
-                                    optionsOutput.append(option.getLabel()).append("\n");
-                                }
-                                outMessage.setMessage(title + "\n" + optionsOutput.toString());
-                                outMessage.setId("2");
-                                outMessage.setType(Message.Type.TEXT);
-                                messageArrayList.add(outMessage);
-                                // speak the message
-                                new SayTask().execute(outMessage.getMessage());
-                                break;
+                                case "option":
+                                    outMessage = new Message();
+                                    String title = r.title();
+                                    StringBuilder optionsOutput = new StringBuilder();
+                                    for (DialogNodeOutputOptionsElement option : r.options()) {
+                                        optionsOutput.append(option.getLabel()).append("\n");
+                                    }
+                                    outMessage.setMessage(title + "\n" + optionsOutput.toString());
+                                    outMessage.setId("2");
+                                    outMessage.setType(Message.Type.TEXT);
+                                    messageArrayList.add(outMessage);
+                                    // speak the message
+                                    new SayTask().execute(outMessage.getMessage());
+                                    break;
 
-                            case "image":
-                                outMessage = new Message(r);
-                                messageArrayList.add(outMessage);
-                                // speak the description
-                                new SayTask().execute("You received an image: " + outMessage.getTitle() + outMessage.getDescription());
-                                break;
+                                case "image":
+                                    outMessage = new Message(r);
+                                    messageArrayList.add(outMessage);
+                                    // speak the description
+                                    new SayTask().execute("You received an image: " + outMessage.getTitle() + outMessage.getDescription());
+                                    break;
 
-                            default:
-                                Log.e("Error", "Unhandled message type");
+                                default:
+                                    Log.e("Error", "Unhandled message type");
+                            }
+                        }
+
+                        runOnUiThread(() -> {
+                            mAdapter.notifyDataSetChanged();
+                            // Only scroll if we have items
+                            if (mAdapter.getItemCount() > 0) {
+                                recyclerView.smoothScrollToPosition(mAdapter.getItemCount() - 1);
+                            }
+                        });
+                    } else {
+                        // If we received a response with empty generic array, send an empty message
+                        try {
+                            Thread.sleep(100);  // Small delay
+                            runOnUiThread(() -> sendMessage());
+                        } catch (InterruptedException e) {
+                            Log.e(TAG, "Error in delay before sending empty message", e);
                         }
                     }
-
-                    runOnUiThread(() -> {
-                        mAdapter.notifyDataSetChanged();
-                        if (mAdapter.getItemCount() > 1) {
-                            recyclerView.getLayoutManager().smoothScrollToPosition(recyclerView,
-                                    null, mAdapter.getItemCount() - 1);
-                        }
-                    });
                 }
             } catch (Exception e) {
                 e.printStackTrace();
