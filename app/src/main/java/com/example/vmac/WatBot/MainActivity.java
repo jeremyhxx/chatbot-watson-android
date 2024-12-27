@@ -414,13 +414,19 @@ public class MainActivity extends AppCompatActivity {
                     .contentType("audio/l16;rate=8000;channels=1;endianness=little-endian")
                     .model("en-US_NarrowbandModel")
                     .inactivityTimeout(60)
-                    .interimResults(true)
+                    .interimResults(false)  // Only get final results
                     .build();
 
             BaseRecognizeCallback callback = new BaseRecognizeCallback() {
+                private boolean hasProcessedResult = false;  // Flag to track if we've processed a result
+
                 @Override
                 public void onTranscription(SpeechRecognitionResults speechResults) {
-                    if (speechResults.getResults() != null && !speechResults.getResults().isEmpty()) {
+                    if (speechResults.getResults() != null && 
+                        !speechResults.getResults().isEmpty() && 
+                        !hasProcessedResult) {  // Only process if we haven't already
+                        
+                        hasProcessedResult = true;  // Mark as processed
                         String text = speechResults.getResults().get(0).getAlternatives().get(0).getTranscript();
                         runOnUiThread(() -> {
                             inputMessage.setText(text);
