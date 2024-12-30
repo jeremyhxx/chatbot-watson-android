@@ -54,6 +54,12 @@ import android.media.MediaPlayer;
 import android.media.MediaRecorder;
 import okhttp3.MediaType;
 import okhttp3.RequestBody;
+import android.content.Intent;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
+import java.util.Locale;
+import android.content.ActivityNotFoundException;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -63,29 +69,18 @@ public class MainActivity extends AppCompatActivity {
     private EditText inputMessage;
     private ImageButton btnSend;
     private ImageButton btnRecord;
-    private MediaRecorder mediaRecorder;
     private MediaPlayer mediaPlayer;
-    private String audioFilePath;
     private boolean isRecording = false;
     private boolean initialRequest;
-    private boolean permissionToRecordAccepted = false;
     private static final int REQUEST_RECORD_AUDIO_PERMISSION = 200;
     private static final String TAG = "MainActivity";
-    private static final int RECORD_REQUEST_CODE = 101;
-    private boolean listening = false;
+    private static final int SPEECH_REQUEST_CODE = 101;
 
     private Assistant watsonAssistant;
     private Response<SessionResponse> watsonAssistantSession;
-    private SpeechToText speechService;
     private TextToSpeech textToSpeech;
 
     private Context mContext;
-
-    private static final int SAMPLE_RATE = 8000;
-    private static final int CHANNEL_CONFIG = android.media.AudioFormat.CHANNEL_IN_MONO;
-    private static final int AUDIO_FORMAT = android.media.AudioFormat.ENCODING_PCM_16BIT;
-    private android.media.AudioRecord audioRecord;
-    private Thread recordingThread = null;
 
     private void createServices() {
         watsonAssistant = new Assistant("2019-02-28", new IamAuthenticator(getString(R.string.assistant_apikey)));
@@ -93,9 +88,6 @@ public class MainActivity extends AppCompatActivity {
 
         textToSpeech = new TextToSpeech(new IamAuthenticator(getString(R.string.TTS_apikey)));
         textToSpeech.setServiceUrl(getString(R.string.TTS_url));
-
-        speechService = new SpeechToText(new IamAuthenticator(getString(R.string.STT_apikey)));
-        speechService.setServiceUrl(getString(R.string.STT_url));
     }
 
     @Override
@@ -123,8 +115,6 @@ public class MainActivity extends AppCompatActivity {
         recyclerView.setAdapter(mAdapter);
         this.inputMessage.setText("");
         this.initialRequest = true;
-
-        audioFilePath = getExternalCacheDir().getAbsolutePath() + "/recording.wav";
 
         int permission = ContextCompat.checkSelfPermission(this,
                 Manifest.permission.RECORD_AUDIO);
@@ -164,6 +154,33 @@ public class MainActivity extends AppCompatActivity {
         sendMessage();
     }
 
+    private void recordMessage() {
+        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault());
+        intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak now...");
+
+        try {
+            startActivityForResult(intent, SPEECH_REQUEST_CODE);
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, "Speech recognition is not supported on this device", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode == SPEECH_REQUEST_CODE && resultCode == RESULT_OK && data != null) {
+            ArrayList<String> result = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+            if (result != null && !result.isEmpty()) {
+                String spokenText = result.get(0);
+                inputMessage.setText(spokenText);
+                sendMessage();
+            }
+        }
+    }
+
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         getMenuInflater().inflate(R.menu.menu, menu);
@@ -185,22 +202,17 @@ public class MainActivity extends AppCompatActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         switch (requestCode) {
             case REQUEST_RECORD_AUDIO_PERMISSION:
-                permissionToRecordAccepted = grantResults[0] == PackageManager.PERMISSION_GRANTED;
-                if (!permissionToRecordAccepted) {
-                    Toast.makeText(this, "Permission to record audio denied", Toast.LENGTH_SHORT).show();
-                }
-                break;
-            case RECORD_REQUEST_CODE:
-                if (grantResults.length == 0 || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
-                    Log.i(TAG, "Permission has been denied by user");
+                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    Log.i(TAG, "Permission granted");
                 } else {
-                    Log.i(TAG, "Permission has been granted by user");
+                    Toast.makeText(this, "Permission to record audio denied", Toast.LENGTH_SHORT).show();
+                    finish();
                 }
                 break;
         }
     }
 
-    protected void makeRequest() {
+    private void makeRequest() {
         ActivityCompat.requestPermissions(this,
                 new String[]{Manifest.permission.RECORD_AUDIO},
                 REQUEST_RECORD_AUDIO_PERMISSION);
@@ -332,159 +344,6 @@ public class MainActivity extends AppCompatActivity {
             return false;
         }
         return true;
-    }
-
-    //Record a message via Watson Speech to Text
-    private void recordMessage() {
-        if (!isRecording) {
-            startRecording();
-        } else {
-            stopRecording();
-        }
-    }
-
-    private void startRecording() {
-        try {
-            int minBufferSize = android.media.AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT);
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                // TODO: Consider calling
-                //    ActivityCompat#requestPermissions
-                // here to request the missing permissions, and then overriding
-                //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-                //                                          int[] grantResults)
-                // to handle the case where the user grants the permission. See the documentation
-                // for ActivityCompat#requestPermissions for more details.
-                return;
-            }
-            audioRecord = new android.media.AudioRecord(
-                    android.media.MediaRecorder.AudioSource.MIC,
-                    SAMPLE_RATE,
-                    CHANNEL_CONFIG,
-                    AUDIO_FORMAT,
-                    minBufferSize
-            );
-
-            File audioFile = new File(getCacheDir(), "recording.pcm");
-            audioFilePath = audioFile.getAbsolutePath();
-
-            audioRecord.startRecording();
-            isRecording = true;
-            btnRecord.setImageResource(R.drawable.ic_stop);
-            Toast.makeText(this, "Recording started", Toast.LENGTH_SHORT).show();
-
-            recordingThread = new Thread(() -> {
-                byte[] buffer = new byte[minBufferSize];
-                try (java.io.FileOutputStream fos = new java.io.FileOutputStream(audioFile)) {
-                    while (isRecording) {
-                        int read = audioRecord.read(buffer, 0, minBufferSize);
-                        if (read > 0) {
-                            fos.write(buffer, 0, read);
-                        }
-                    }
-                } catch (IOException e) {
-                    Log.e(TAG, "Error writing audio data", e);
-                }
-            });
-            recordingThread.start();
-
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to start recording", e);
-            releaseAudioRecord();
-            Toast.makeText(this, "Failed to start recording", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private void stopRecording() {
-        if (audioRecord != null && isRecording) {
-            try {
-                isRecording = false;
-                if (recordingThread != null) {
-                    recordingThread.join();
-                    recordingThread = null;
-                }
-                audioRecord.stop();
-                btnRecord.setImageResource(R.drawable.ic_mic);
-                Toast.makeText(this, "Recording stopped", Toast.LENGTH_SHORT).show();
-                
-                // Convert audio to text
-                convertAudioToText();
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to stop recording", e);
-                Toast.makeText(this, "Failed to stop recording", Toast.LENGTH_SHORT).show();
-            } finally {
-                releaseAudioRecord();
-            }
-        }
-    }
-
-    private void releaseAudioRecord() {
-        if (audioRecord != null) {
-            try {
-                audioRecord.release();
-            } catch (Exception e) {
-                Log.e(TAG, "Error releasing AudioRecord", e);
-            }
-            audioRecord = null;
-        }
-    }
-
-    private void convertAudioToText() {
-        try {
-            File audioFile = new File(audioFilePath);
-            if (!audioFile.exists()) {
-                Toast.makeText(this, "Audio file not found", Toast.LENGTH_SHORT).show();
-                return;
-            }
-
-            FileInputStream fis = new FileInputStream(audioFile);
-            RecognizeOptions recognizeOptions = new RecognizeOptions.Builder()
-                    .audio(fis)
-                    .contentType("audio/l16;rate=8000;channels=1;endianness=little-endian")
-                    .model("en-US_NarrowbandModel")
-                    .inactivityTimeout(60)
-                    .interimResults(false)  // Only get final results
-                    .build();
-
-            BaseRecognizeCallback callback = new BaseRecognizeCallback() {
-                private boolean hasProcessedResult = false;  // Flag to track if we've processed a result
-
-                @Override
-                public void onTranscription(SpeechRecognitionResults speechResults) {
-                    if (speechResults.getResults() != null && 
-                        !speechResults.getResults().isEmpty() && 
-                        !hasProcessedResult) {  // Only process if we haven't already
-                        
-                        hasProcessedResult = true;  // Mark as processed
-                        String text = speechResults.getResults().get(0).getAlternatives().get(0).getTranscript();
-                        runOnUiThread(() -> {
-                            inputMessage.setText(text);
-                            sendMessage();
-                        });
-                    }
-                }
-
-                @Override
-                public void onError(Exception e) {
-                    runOnUiThread(() -> {
-                        Log.e(TAG, "Error during speech recognition", e);
-                        Toast.makeText(MainActivity.this, "Failed to convert speech to text: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-                    });
-                }
-
-                @Override
-                public void onDisconnected() {
-                    runOnUiThread(() -> {
-                        audioFile.delete();
-                    });
-                }
-            };
-
-            speechService.recognizeUsingWebSocket(recognizeOptions, callback);
-
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to convert audio to text", e);
-            Toast.makeText(this, "Failed to convert audio to text", Toast.LENGTH_SHORT).show();
-        }
     }
 
     private class SayTask extends AsyncTask<String, Void, String> {
@@ -620,7 +479,6 @@ public class MainActivity extends AppCompatActivity {
             mediaPlayer.release();
             mediaPlayer = null;
         }
-        releaseAudioRecord();
         // Clean up Watson services
         if (watsonAssistantSession != null) {
             try {
