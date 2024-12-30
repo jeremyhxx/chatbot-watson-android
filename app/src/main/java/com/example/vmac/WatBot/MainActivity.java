@@ -22,46 +22,28 @@ import android.view.View;
 import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.Toast;
+import android.content.Intent;
+import android.speech.RecognizerIntent;
+import android.content.ActivityNotFoundException;
+import java.util.Locale;
+import java.util.ArrayList;
+import java.util.List;
+import java.io.File;
+import android.media.MediaPlayer;
 
-import com.ibm.cloud.sdk.core.http.HttpMediaType;
-import com.ibm.cloud.sdk.core.http.Response;
-import com.ibm.cloud.sdk.core.http.ServiceCall;
 import com.ibm.cloud.sdk.core.security.IamAuthenticator;
-import com.ibm.watson.assistant.v2.model.DialogNodeOutputOptionsElement;
-import com.ibm.watson.assistant.v2.model.RuntimeResponseGeneric;
 import com.ibm.watson.assistant.v2.Assistant;
 import com.ibm.watson.assistant.v2.model.CreateSessionOptions;
 import com.ibm.watson.assistant.v2.model.MessageInput;
 import com.ibm.watson.assistant.v2.model.MessageOptions;
 import com.ibm.watson.assistant.v2.model.MessageResponse;
 import com.ibm.watson.assistant.v2.model.SessionResponse;
-import com.ibm.watson.speech_to_text.v1.SpeechToText;
-import com.ibm.watson.speech_to_text.v1.model.RecognizeOptions;
-import com.ibm.watson.speech_to_text.v1.model.SpeechRecognitionResults;
-import com.ibm.watson.speech_to_text.v1.websocket.BaseRecognizeCallback;
-import com.ibm.watson.text_to_speech.v1.TextToSpeech;
-import com.ibm.watson.text_to_speech.v1.model.SynthesizeOptions;
+import com.ibm.watson.assistant.v2.model.RuntimeResponseGeneric;
+import com.ibm.watson.assistant.v2.model.DialogNodeOutputOptionsElement;
+import com.ibm.cloud.sdk.core.http.Response;
+import com.ibm.cloud.sdk.core.http.ServiceCall;
 
-import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.List;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.util.Map;
-
-import android.media.MediaPlayer;
-import android.media.MediaRecorder;
-import okhttp3.MediaType;
-import okhttp3.RequestBody;
-import android.content.Intent;
-import android.speech.RecognitionListener;
-import android.speech.RecognizerIntent;
-import android.speech.SpeechRecognizer;
-import java.util.Locale;
-import android.content.ActivityNotFoundException;
-
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements android.speech.tts.TextToSpeech.OnInitListener {
 
     private RecyclerView recyclerView;
     private ChatAdapter mAdapter;
@@ -78,16 +60,36 @@ public class MainActivity extends AppCompatActivity {
 
     private Assistant watsonAssistant;
     private Response<SessionResponse> watsonAssistantSession;
-    private TextToSpeech textToSpeech;
+    private android.speech.tts.TextToSpeech tts;
+    private boolean ttsReady = false;
 
     private Context mContext;
 
     private void createServices() {
         watsonAssistant = new Assistant("2019-02-28", new IamAuthenticator(getString(R.string.assistant_apikey)));
         watsonAssistant.setServiceUrl(getString(R.string.assistant_url));
+        
+        // Initialize Android TTS
+        tts = new android.speech.tts.TextToSpeech(this, this);
+    }
 
-        textToSpeech = new TextToSpeech(new IamAuthenticator(getString(R.string.TTS_apikey)));
-        textToSpeech.setServiceUrl(getString(R.string.TTS_url));
+    @Override
+    public void onInit(int status) {
+        if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+            int result = tts.setLanguage(Locale.US);
+            if (result == android.speech.tts.TextToSpeech.LANG_MISSING_DATA || 
+                result == android.speech.tts.TextToSpeech.LANG_NOT_SUPPORTED) {
+                Log.e(TAG, "Language not supported");
+                Toast.makeText(this, "Text to speech language not supported", Toast.LENGTH_SHORT).show();
+            } else {
+                ttsReady = true;
+                tts.setPitch(1.0f);
+                tts.setSpeechRate(1.0f);
+            }
+        } else {
+            Log.e(TAG, "TTS Initialization failed");
+            Toast.makeText(this, "Text to speech initialization failed", Toast.LENGTH_SHORT).show();
+        }
     }
 
     @Override
@@ -347,137 +349,24 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private class SayTask extends AsyncTask<String, Void, String> {
-        private File tempFile = null;
-
         @Override
         protected String doInBackground(String... params) {
-            String text = params[0];
-            try {
-                // Clean up any existing MediaPlayer first
-                if (mediaPlayer != null) {
-                    runOnUiThread(() -> {
-                        try {
-                            mediaPlayer.stop();
-                        } catch (IllegalStateException e) {
-                            // Ignore state errors
-                        }
-                        mediaPlayer.release();
-                        mediaPlayer = null;
-                    });
-                }
-
-                // Create Text-to-Speech request
-                SynthesizeOptions synthesizeOptions = new SynthesizeOptions.Builder()
-                        .text(text)
-                        .accept("audio/mp3")
-                        .voice(SynthesizeOptions.Voice.EN_US_LISAVOICE)  // Try a different voice
-                        .build();
-
-                // Get the audio stream from Watson
-                Response<InputStream> ttsResponse = textToSpeech.synthesize(synthesizeOptions).execute();
-                if (ttsResponse == null || ttsResponse.getResult() == null) {
-                    Log.e(TAG, "Text-to-Speech response or result is null");
-                    return "Failed to synthesize";
-                }
-
-                InputStream audioStream = ttsResponse.getResult();
-                
-                // Write the audio stream to a temporary file
-                tempFile = File.createTempFile("tts_", ".mp3", getCacheDir());
-                try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tempFile)) {
-                    byte[] buffer = new byte[8192];
-                    int length;
-                    while ((length = audioStream.read(buffer)) > 0) {
-                        fos.write(buffer, 0, length);
-                    }
-                    fos.flush();
-                }
-                audioStream.close();
-
-                // Ensure the file exists and has content
-                if (!tempFile.exists() || tempFile.length() == 0) {
-                    Log.e(TAG, "Failed to write audio file or file is empty");
-                    return "Failed to synthesize";
-                }
-
-                // Create and set up new MediaPlayer on UI thread
-                runOnUiThread(() -> {
-                    try {
-                        mediaPlayer = new MediaPlayer();
-                        mediaPlayer.setOnErrorListener((mp, what, extra) -> {
-                            Log.e(TAG, "MediaPlayer error: " + what + ", " + extra);
-                            cleanupMediaPlayer();
-                            return true;
-                        });
-
-                        // Set up completion listener before preparing
-                        mediaPlayer.setOnCompletionListener(mp -> cleanupMediaPlayer());
-
-                        mediaPlayer.setDataSource(tempFile.getAbsolutePath());
-                        mediaPlayer.setOnPreparedListener(mp -> {
-                            try {
-                                mp.start();
-                            } catch (IllegalStateException e) {
-                                Log.e(TAG, "Failed to start MediaPlayer", e);
-                                cleanupMediaPlayer();
-                            }
-                        });
-                        
-                        // Prepare asynchronously
-                        mediaPlayer.prepareAsync();
-                    } catch (IOException e) {
-                        Log.e(TAG, "Failed to set up MediaPlayer: " + e.getMessage(), e);
-                        cleanupMediaPlayer();
-                    }
-                });
-                
-                return "Did synthesize";
-            } catch (com.ibm.cloud.sdk.core.service.exception.ForbiddenException e) {
-                Log.e(TAG, "Text-to-Speech service authentication failed: " + e.getMessage(), e);
-                return "Authentication failed";
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to synthesize audio: " + e.getMessage(), e);
-                return "Failed to synthesize";
-            }
-        }
-
-        private void cleanupMediaPlayer() {
-            runOnUiThread(() -> {
-                if (mediaPlayer != null) {
-                    try {
-                        mediaPlayer.stop();
-                    } catch (IllegalStateException e) {
-                        // Ignore state errors
-                    }
-                    mediaPlayer.release();
-                    mediaPlayer = null;
-                }
-                if (tempFile != null) {
-                    tempFile.delete();
-                    tempFile = null;
-                }
-            });
+            return params[0];
         }
 
         @Override
-        protected void onPostExecute(String result) {
-            switch (result) {
-                case "Authentication failed":
-                    Toast.makeText(MainActivity.this, "Text-to-Speech service authentication failed. Please check your credentials.", Toast.LENGTH_LONG).show();
-                    break;
-                case "Failed to synthesize":
-                    Toast.makeText(MainActivity.this, "Failed to play audio", Toast.LENGTH_SHORT).show();
-                    break;
+        protected void onPostExecute(String text) {
+            if (ttsReady) {
+                tts.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "MessageId_" + System.currentTimeMillis());
             }
         }
     }
 
     @Override
     protected void onDestroy() {
-        super.onDestroy();
-        if (mediaPlayer != null) {
-            mediaPlayer.release();
-            mediaPlayer = null;
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
         }
         // Clean up Watson services
         if (watsonAssistantSession != null) {
@@ -490,6 +379,7 @@ public class MainActivity extends AppCompatActivity {
                 Log.e(TAG, "Failed to delete Watson Assistant session", e);
             }
         }
+        super.onDestroy();
     }
 }
 
