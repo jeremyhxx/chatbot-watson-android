@@ -346,6 +346,16 @@ public class MainActivity extends AppCompatActivity {
     private void startRecording() {
         try {
             int minBufferSize = android.media.AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT);
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                // TODO: Consider calling
+                //    ActivityCompat#requestPermissions
+                // here to request the missing permissions, and then overriding
+                //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                //                                          int[] grantResults)
+                // to handle the case where the user grants the permission. See the documentation
+                // for ActivityCompat#requestPermissions for more details.
+                return;
+            }
             audioRecord = new android.media.AudioRecord(
                     android.media.MediaRecorder.AudioSource.MIC,
                     SAMPLE_RATE,
@@ -483,12 +493,6 @@ public class MainActivity extends AppCompatActivity {
         @Override
         protected String doInBackground(String... params) {
             String text = params[0];
-            SynthesizeOptions synthesizeOptions = new SynthesizeOptions.Builder()
-                    .text(text)
-                    .accept("audio/mp3")
-                    .voice(SynthesizeOptions.Voice.EN_US_LISAVOICE)
-                    .build();
-
             try {
                 // Clean up any existing MediaPlayer first
                 if (mediaPlayer != null) {
@@ -503,8 +507,21 @@ public class MainActivity extends AppCompatActivity {
                     });
                 }
 
+                // Create Text-to-Speech request
+                SynthesizeOptions synthesizeOptions = new SynthesizeOptions.Builder()
+                        .text(text)
+                        .accept("audio/mp3")
+                        .voice(SynthesizeOptions.Voice.EN_US_LISAVOICE)  // Try a different voice
+                        .build();
+
                 // Get the audio stream from Watson
-                InputStream audioStream = textToSpeech.synthesize(synthesizeOptions).execute().getResult();
+                Response<InputStream> ttsResponse = textToSpeech.synthesize(synthesizeOptions).execute();
+                if (ttsResponse == null || ttsResponse.getResult() == null) {
+                    Log.e(TAG, "Text-to-Speech response or result is null");
+                    return "Failed to synthesize";
+                }
+
+                InputStream audioStream = ttsResponse.getResult();
                 
                 // Write the audio stream to a temporary file
                 tempFile = File.createTempFile("tts_", ".mp3", getCacheDir());
@@ -520,7 +537,8 @@ public class MainActivity extends AppCompatActivity {
 
                 // Ensure the file exists and has content
                 if (!tempFile.exists() || tempFile.length() == 0) {
-                    throw new IOException("Failed to write audio file");
+                    Log.e(TAG, "Failed to write audio file or file is empty");
+                    return "Failed to synthesize";
                 }
 
                 // Create and set up new MediaPlayer on UI thread
@@ -534,9 +552,7 @@ public class MainActivity extends AppCompatActivity {
                         });
 
                         // Set up completion listener before preparing
-                        mediaPlayer.setOnCompletionListener(mp -> {
-                            cleanupMediaPlayer();
-                        });
+                        mediaPlayer.setOnCompletionListener(mp -> cleanupMediaPlayer());
 
                         mediaPlayer.setDataSource(tempFile.getAbsolutePath());
                         mediaPlayer.setOnPreparedListener(mp -> {
@@ -551,15 +567,17 @@ public class MainActivity extends AppCompatActivity {
                         // Prepare asynchronously
                         mediaPlayer.prepareAsync();
                     } catch (IOException e) {
-                        Log.e(TAG, "Failed to set up MediaPlayer", e);
+                        Log.e(TAG, "Failed to set up MediaPlayer: " + e.getMessage(), e);
                         cleanupMediaPlayer();
                     }
                 });
                 
                 return "Did synthesize";
-            } catch (IOException e) {
-                Log.e(TAG, "Failed to synthesize audio", e);
-                cleanupMediaPlayer();
+            } catch (com.ibm.cloud.sdk.core.service.exception.ForbiddenException e) {
+                Log.e(TAG, "Text-to-Speech service authentication failed: " + e.getMessage(), e);
+                return "Authentication failed";
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to synthesize audio: " + e.getMessage(), e);
                 return "Failed to synthesize";
             }
         }
@@ -584,8 +602,13 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         protected void onPostExecute(String result) {
-            if (result.equals("Failed to synthesize")) {
-                Toast.makeText(MainActivity.this, "Failed to play audio", Toast.LENGTH_SHORT).show();
+            switch (result) {
+                case "Authentication failed":
+                    Toast.makeText(MainActivity.this, "Text-to-Speech service authentication failed. Please check your credentials.", Toast.LENGTH_LONG).show();
+                    break;
+                case "Failed to synthesize":
+                    Toast.makeText(MainActivity.this, "Failed to play audio", Toast.LENGTH_SHORT).show();
+                    break;
             }
         }
     }
